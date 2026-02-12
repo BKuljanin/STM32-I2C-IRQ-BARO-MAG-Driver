@@ -70,6 +70,8 @@ void I2C1_init(void)
 	GPIOB->AFR[1] |= (1U<<6);
 	GPIOB->AFR[1] &=~ (1U<<7);
 
+	GPIOB->OSPEEDR |= (3U<<16) | (3U<<18);  // Reference manual p187. PB8, PB9 high speed
+
 	RCC->APB1ENR |= I2C1EN; // Enable clock access for I2C1, Reference manual p146 bit 21
 
 	// Enter reset mode
@@ -82,9 +84,20 @@ void I2C1_init(void)
 	I2C1->CR2 = (1U<<4);// I2C bus frequency. Reference manual p765. 16MHz (10000 binary 5th bit position 5)
 	//If clock is 1MHz simply write 1 since its all MHz, set bit 0 to 1; if 2Mhz write to bit 1 (boolean 2)
 
+	I2C1->CR1 |= CR1_ACK;   // Default ACK enabled, will be cleared it for last bytes
+
 	I2C1->CCR = I2C_100KHZ; //CCR bits 0-11 I2C clock. We want standard mode 100kHz, 16MHz/(2*80) = 100kHz
 
 	I2C1->TRISE = SD_MODE_MAX_RISE_TIME;// Rise time, reference manual p772,773. The time it takes for the I²C signal (SDA or SCL) to go from LOW to HIGH
+
+	// Enable event + error interrupts
+	I2C1->CR2 |= (1U<<9) | (1U<<8) | (1U<<10); // Reference manual p765, 766: ITERR, ITEVT, ITBUF
+
+	NVIC_SetPriority(I2C1_EV_IRQn, 1); // Event interrupt: SB, ADDR, TXE, RXNE, BTF, STOPF
+	NVIC_EnableIRQ(I2C1_EV_IRQn);
+
+	NVIC_SetPriority(I2C1_ER_IRQn, 0); // Higher priority than EV
+	NVIC_EnableIRQ(I2C1_ER_IRQn); // Error interrupt: AF (acknowledge failure), BERR (bus error), ARLO (arbitration lost), OVR (overrun, underrun), TIMEOUT
 
 	//Enable I2C
 	I2C1->CR1 |= CR1_PE;
@@ -453,5 +466,44 @@ static i2c_status_t wait_flag_set_or_nack_checked(volatile uint32_t *reg,
         return i2c_abort_and_reset(st);
 
     return I2C_OK;
+}
+
+
+// Handling interrupts
+void I2C1_EV_IRQHandler(void)
+{
+    uint32_t sr1 = I2C1->SR1;
+
+    if (sr1 & SR1_SB) {
+        // START sent - send address
+    }
+    else if (sr1 & SR1_ADDR) {
+        // address ACKed - clear ADDR - next state
+    }
+    else if (sr1 & SR1_TXE) {
+        // Send next byte
+    }
+    else if (sr1 & SR1_RXNE) {
+        // Read byte
+    }
+    else if (sr1 & SR1_BTF) {
+        // Handle end-of-transfer cases
+    }
+}
+
+
+void I2C1_ER_IRQHandler(void)
+{
+    uint32_t sr1 = I2C1->SR1;
+
+    if (sr1 & I2C_SR1_AF) {
+        // NACK - clear AF - STOP - error
+    }
+    if (sr1 & I2C_SR1_BERR) {
+        // Bus error
+    }
+    if (sr1 & I2C_SR1_ARLO) {
+        // Arbitration lost
+    }
 }
 
