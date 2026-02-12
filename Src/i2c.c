@@ -474,21 +474,80 @@ void I2C1_EV_IRQHandler(void)
 {
     uint32_t sr1 = I2C1->SR1;
 
+    /* 1. Start condition set */
+
+    // START sent - send address
     if (sr1 & SR1_SB) {
-        // START sent - send address
+    	 if (g.st == I2C_ST_START) { // Start bit expected
+    	            g.addr_is_read = 0;
+    	            I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
+    	            //I2C1->DR = (uint8_t)(g.addr7 << 1);       // SLA+W
+    	            g.st = I2C_ST_ADDR;
+    	        } else if (g.st == I2C_ST_RESTART) { // Repeated start bit expected
+    	            g.addr_is_read = 1;
+    	            I2C1->DR = saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
+    	            g.st = I2C_ST_ADDR;
+    	        }
+    	        return;
     }
-    else if (sr1 & SR1_ADDR) {
-        // address ACKed - clear ADDR - next state
+
+    /* 2. Address sent and ACKed - ADDR */
+
+    if (sr1 & SR1_ADDR) {
+        volatile uint32_t tmp;
+        tmp = I2C1->SR1;
+        tmp = I2C1->SR2;
+        (void)tmp; // Just to avoid compiler complaining about not using tmp
+
+        if (g.addr_is_read == 0) {
+            // We are in SLA+W phase: next send register address
+            g.st = I2C_ST_SEND_REG;
+        } else {
+            // We are in SLA+R phase: configure ACK/NACK sequence based on rx_len
+            if (g.rx_len == 1) {
+                I2C1->CR1 &= ~CR1_ACK;  // NACK after 1 byte if there is only 1 byte remaining in transfer
+                I2C1->CR1 |= CR1_STOP;  // STOP immediately after clearing ADDR
+            }
+            /*else if (g.rx_len == 2) {
+                I2C1->CR1 |= CR1_POS;
+                I2C1->CR1 &= ~CR1_ACK;  // NACK on the last two sequence
+                // STOP will be set when BTF happens
+            }*/
+            else {
+                I2C1->CR1 |= CR1_ACK;
+                //I2C1->CR1 &= ~CR1_POS;
+            }
+            g.st = I2C_ST_RX;
+        }
+        return;
     }
-    else if (sr1 & SR1_TXE) {
-        // Send next byte
-    }
+
+
+    /* 3. TXR: DR empty, ready to write */
+
+    if (sr1 & SR1_TXE) {
+        if (g.st == I2C_ST_SEND_REG) {
+            I2C1->DR = g.reg;
+
+            if (g.op == I2C_OP_READ_REGS) {
+                g.st = I2C_ST_RESTART;
+                I2C1->CR1 |= CR1_START; // repeated start -> SB will fire
+            } else {
+                // write op: after reg, start sending payload
+                g.st = I2C_ST_TX;
+            }
+            return;
+        }
+
+
+
+
     else if (sr1 & SR1_RXNE) {
         // Read byte
     }
     else if (sr1 & SR1_BTF) {
         // Handle end-of-transfer cases
-    }
+    }*/
 }
 
 
@@ -506,4 +565,12 @@ void I2C1_ER_IRQHandler(void)
         // Arbitration lost
     }
 }
+
+
+static void i2c1_disable_irqs(void)
+{
+    // Disable buffer/event/error interrupts (keep peripheral enabled)
+    I2C1->CR2 &= ~((1U<<10) | (1U<<9) | (1U<<8)); // ITBUFEN, ITEVTEN, ITERREN
+}
+
 
