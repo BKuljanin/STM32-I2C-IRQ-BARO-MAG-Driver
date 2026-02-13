@@ -17,6 +17,16 @@
 #define SR1_RXNE (1U<<6)
 #define SR1_BTF (1U<<2)
 
+// bus error related registers
+#define SR1_BERR    (1U<<8)   // Bus error
+#define SR1_ARLO    (1U<<9)   // Arbitration lost
+#define SR1_AF      (1U<<10)  // Acknowledge failure (NACK)
+#define SR1_OVR     (1U<<11)  // Overrun/Underrun
+#define SR1_PECERR  (1U<<12)  // PEC error (SMBus, usually ignore)
+#define SR1_TIMEOUT (1U<<14)  // Timeout/Tlow error
+#define SR1_SMBALERT (1U<<15) // SMBus alert (usually ignore)
+
+
 #define I2C_100KHZ 80 //0B 0101 000 decimal = 80
 #define SD_MODE_MAX_RISE_TIME 17 // various tools compute this value
 
@@ -564,26 +574,26 @@ void I2C1_EV_IRQHandler(void)
             if (g.st == I2C_ST_RX) {
                 uint16_t remaining = (uint16_t)(g.rx_len - g.rx_i);
 
-                if (remaining == 2) {
+               /* if (remaining == 2) {
                     // This is the special N=2 case (POS=1, ACK=0 already set in ADDR)
                     I2C1->CR1 |= CR1_STOP;
                     g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
                     g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
                     i2c1_finish(I2C_OK, false);
                     return;
-                }
+                }*/
 
                 if (remaining == 3) {
                     // Classic last-3 sequence:
                     // when BTF set, two bytes are ready (N-2 and N-1), and N is in shift.
-                    I2C1->CR1 &= ~CR1_ACK;         // prepare NACK for last byte
+                    I2C1->CR1 &= ~CR1_ACK;         // prepare NACK for last remaining byte
 
                     g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N-2
 
                     I2C1->CR1 |= CR1_STOP;         // STOP before reading last 2
 
                     g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N-1
-                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N
+                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N. Hardware immediately moves the byte from the shift register into DR (because DR is now empty)
                     i2c1_finish(I2C_OK, false);
                     return;
                 }
@@ -607,17 +617,76 @@ void I2C1_EV_IRQHandler(void)
 void I2C1_ER_IRQHandler(void)
 {
     uint32_t sr1 = I2C1->SR1;
+    i2c_status_t st = I2C_ERR_RECOVERY;
+    bool need_stop = true;
 
-    if (sr1 & I2C_SR1_AF) {
-        // NACK - clear AF - STOP - error
+    // 1) NACK / acknowledge failure
+    // Happens if the slave doesn't ACK address or a data byte.
+    if (sr1 & SR1_AF)
+    {
+        // Clear AF by writing 0 to it
+        I2C1->SR1 &= ~SR1_AF;
+        st = I2C_ERR_NACK;
+
+        // If we lost arbitration too, ARLO handler below will overwrite st.
+        // We generally still try to STOP.
     }
-    if (sr1 & I2C_SR1_BERR) {
-        // Bus error
+
+    // 2) Bus error (illegal START/STOP, line glitch, etc.)
+    if (sr1 & SR1_BERR)
+    {
+        I2C1->SR1 &= ~SR1_BERR;
+        st = I2C_ERR_RECOVERY;
     }
-    if (sr1 & I2C_SR1_ARLO) {
-        // Arbitration lost
+
+    // 3) Arbitration lost (multi master or noise)
+    // If ARLO happens, we are no longer master; STOP may be meaningless.
+    if (sr1 & SR1_ARLO)
+    {
+        I2C1->SR1 &= ~SR1_ARLO;
+        st = I2C_ERR_RECOVERY;
+
+        // After ARLO, hardware switches off master mode. Generating STOP may not do anything.
+        // We can avoid forcing STOP to reduce weirdness.
+        need_stop = false;
     }
+
+    // 4) Overrun/Underrun
+    // Can happen if DR not read/written in time (often logic bug).
+    if (sr1 & SR1_OVR)
+    {
+        I2C1->SR1 &= ~SR1_OVR;
+        st = I2C_ERR_RECOVERY;
+    }
+
+    // 5) Timeout SCL low too long etc.
+    if (sr1 & SR1_TIMEOUT)
+    {
+        I2C1->SR1 &= ~SR1_TIMEOUT;
+        st = I2C_ERR_TIMEOUT;
+    }
+
+    // 6) SMBus-only flags: clear & ignore (unless you intentionally use SMBus)
+    if (sr1 & SR1_PECERR)
+    {
+        I2C1->SR1 &= ~SR1_PECERR;
+        // keep existing st
+    }
+
+    if (sr1 & SR1_SMBALERT)
+    {
+        I2C1->SR1 &= ~SR1_SMBALERT;
+        // keep existing st
+    }
+
+    // If we weren't in an active transfer, just clear flags and exit.
+    if (g.st == I2C_ST_IDLE)
+        return;
+
+    // Abort/finish: send STOP when it makes sense, then reset state machine
+    i2c1_finish(st, need_stop);
 }
+
 
 
 static void i2c1_disable_irqs(void)
