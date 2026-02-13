@@ -543,14 +543,64 @@ void I2C1_EV_IRQHandler(void)
             return;
         }
 
-    /* RXNE: data received */
 
-    else if (sr1 & SR1_RXNE) {
-        // Read byte
-    }
-    else if (sr1 & SR1_BTF) {
-        // Handle end-of-transfer cases
-    }*/
+    /* 4. RXNE: data received */
+
+    if (sr1 & SR1_RXNE) {
+            if (g.st == I2C_ST_RX) {
+                // For rx_len==1, RXNE is the final byte
+                g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
+
+                if (g.rx_i >= g.rx_len) { // Reached last byte
+                    i2c1_finish(I2C_OK, false); // STOP already sent in len==1 case; harmless if not
+                }
+                return;
+            }
+        }
+
+
+    // 5) BTF: byte transfer finished (important for N=2 and last-3 handling)
+        if (sr1 & SR1_BTF) {
+            if (g.st == I2C_ST_RX) {
+                uint16_t remaining = (uint16_t)(g.rx_len - g.rx_i);
+
+                if (remaining == 2) {
+                    // This is the special N=2 case (POS=1, ACK=0 already set in ADDR)
+                    I2C1->CR1 |= CR1_STOP;
+                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
+                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
+                    i2c1_finish(I2C_OK, false);
+                    return;
+                }
+
+                if (remaining == 3) {
+                    // Classic last-3 sequence:
+                    // when BTF set, two bytes are ready (N-2 and N-1), and N is in shift.
+                    I2C1->CR1 &= ~CR1_ACK;         // prepare NACK for last byte
+
+                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N-2
+
+                    I2C1->CR1 |= CR1_STOP;         // STOP before reading last 2
+
+                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N-1
+                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N
+                    i2c1_finish(I2C_OK, false);
+                    return;
+                }
+
+                // For remaining > 3, you can optionally read one byte here too,
+                // but RXNE path already handles streaming bytes.
+                return;
+            }
+
+            if (g.st == I2C_ST_TX) {
+                // End of write: when both DR and shift register empty
+                if (g.tx_i >= g.tx_len) {
+                    i2c1_finish(I2C_OK, true); // generate STOP
+                }
+                return;
+            }
+        }
 }
 
 
