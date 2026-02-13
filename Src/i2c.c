@@ -525,22 +525,25 @@ void I2C1_EV_IRQHandler(void)
 
     /* 3. TXR: DR empty, ready to write */
 
-    if (sr1 & SR1_TXE) {
-        if (g.st == I2C_ST_SEND_REG) {
-            I2C1->DR = g.reg;
+    if (sr1 & SR1_TXE) { // Previous byte moved from DR to shift register, ready to write
+        if (g.st == I2C_ST_SEND_REG) { // Expected to send slave register address
+            I2C1->DR = g.maddr;
 
-            if (g.op == I2C_OP_READ_REGS) {
-                g.st = I2C_ST_RESTART;
-                I2C1->CR1 |= CR1_START; // repeated start -> SB will fire
-            } else {
-                // write op: after reg, start sending payload
-                g.st = I2C_ST_TX;
+            if (g.op == I2C_OP_READ_REGS) { // This operation is a register read
+            // sequence is: START - SLAVE ADDR+W - SLAVE REG ADDR+R - REPEATED START - SLAVE ADDR+R - read bytes
+
+                g.st = I2C_ST_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
+
+                I2C1->CR1 |= CR1_START; // During read arms the hardware to generate a repeated START only after the current byte transfer is finished safely.
+            	}
+            } else { // This operation is a register write
+
+                g.st = I2C_ST_TX; // We are still in the write phase so we issue START
             }
             return;
         }
 
-
-
+    /* RXNE: data received */
 
     else if (sr1 & SR1_RXNE) {
         // Read byte
