@@ -495,7 +495,7 @@ void I2C1_EV_IRQHandler(void)
     	            g.st = I2C_SADDR;
     	        } else if (g.st == I2C_RESTART) { // Repeated start bit expected
     	            g.addr_is_read = 1;
-    	            I2C1->DR = saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
+    	            I2C1->DR = g.saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
     	            g.st = I2C_SADDR;
     	        }
     	        return;
@@ -538,6 +538,8 @@ void I2C1_EV_IRQHandler(void)
 
     if (sr1 & SR1_TXE) { // Previous byte moved from DR to shift register, ready to write
 
+    	if (g.st == I2C_SEND_REG || g.st == I2C_SEND_DATA){
+
         	if (g.sent_reg == 0) { // First time we enter TXE, both in read and write, we need to write slave register address. Either we read or write starting from that register
         		I2C1->DR = g.maddr;
         		g.sent_reg = 1; // Once we write maddr we set this flag so we don't write slave register address every time TXE triggers, just first time
@@ -562,7 +564,7 @@ void I2C1_EV_IRQHandler(void)
             		}
 
             	}
-
+    	}
 
         }
 
