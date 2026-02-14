@@ -537,7 +537,6 @@ void I2C1_EV_IRQHandler(void)
     /* 3. TXE: DR empty, ready to write */
 
     if (sr1 & SR1_TXE) { // Previous byte moved from DR to shift register, ready to write
-        if (g.st == I2C_SEND_REG) { // Expected to send slave register address
 
         	if (g.sent_reg == 0) { // First time we enter TXE, both in read and write, we need to write slave register address. Either we read or write starting from that register
         		I2C1->DR = g.maddr;
@@ -564,7 +563,6 @@ void I2C1_EV_IRQHandler(void)
 
             	}
 
-            }
 
         }
 
@@ -591,7 +589,7 @@ void I2C1_EV_IRQHandler(void)
             		*g.data++ = I2C1->DR; // Reading byte from DR
             		if (g.n == 1){
             			I2C1->CR1 &= ~CR1_ACK; // If one more byte remains, set NACK now. It's too late if it gets to DR, so set now while its in shift register
-            			*g.data++ = I2C1->DR; // Reading byte from DR
+            			// *g.data++ = I2C1->DR; // Reading byte from DR Commented out this is wrong place to read, read hapepns in next interrupt RXNE
             		}
             	}
 
