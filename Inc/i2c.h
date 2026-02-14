@@ -19,6 +19,7 @@ typedef enum {
 	I2C_SEND_DATA,	// Sending data
 	I2C_READ_DATA, 	// Reading data
 	I2C_IDLE, // R/W done
+	I2C_DATA_SENT, // Data written
 
     // Data phases
     I2C_ST_TX,             // sending payload bytes (write)
