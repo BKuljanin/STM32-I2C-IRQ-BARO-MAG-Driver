@@ -412,34 +412,7 @@ static i2c_status_t wait_flag_set_or_nack(volatile uint32_t *reg, uint32_t mask,
     return I2C_OK;
 }
 
-// Abort plus peripheral reset
-static i2c_status_t i2c_abort_and_reset(i2c_status_t reason)
-{
-    // Generate STOP
-    I2C1->CR1 |= CR1_STOP;
 
-    // Clear NACK flag if set
-    if (I2C1->SR1 & I2C_SR1_AF)
-        I2C1->SR1 &= ~I2C_SR1_AF;
-
-    // Disable I2C
-    I2C1->CR1 &= ~CR1_PE;
-
-    // Small delay to let bus settle
-    uint32_t start = millis();
-    while (elapsed_ms(start) < 1U) {}
-
-    // Re-enable peripheral
-    I2C1->CR1 |= CR1_PE;
-
-    // Check BUSY cleared
-    if (wait_flag_clear(&I2C1->SR2, I2C_SR2_BUSY, I2C_BUSY_TIMEOUT_MS) != I2C_OK)
-    {
-        return I2C_ERR_RECOVERY;
-    }
-
-    return reason;
-}
 
 // I2C abort and reset if needed
 static i2c_status_t wait_flag_set_checked(volatile uint32_t *reg,
@@ -586,6 +559,7 @@ void I2C1_EV_IRQHandler(void)
             		*g.data++ = I2C1->DR; // data is the pointer to the vector buffer
 
             		g.st = I2C_IDLE;
+            		i2c1_disable_irqs();
             	}
 
             	else if (g.n > 1){
@@ -608,6 +582,7 @@ void I2C1_EV_IRQHandler(void)
             	// Generate stop condition
             	I2C1->CR1 |= CR1_STOP;
             	g.st = I2C_IDLE;
+            	i2c1_disable_irqs();
             }
             return;
         }
@@ -680,7 +655,7 @@ void I2C1_ER_IRQHandler(void)
     }
 
     // If we weren't in an active transfer, just clear flags and exit.
-    if (g.st == I2C_ST_IDLE)
+    if (g.st == I2C_IDLE)
         return;
 
     // Abort/finish: send STOP when it makes sense, then reset state machine
@@ -695,6 +670,90 @@ static void i2c1_disable_irqs(void)
     I2C1->CR2 &= ~((1U<<10) | (1U<<9) | (1U<<8)); // ITBUFEN, ITEVTEN, ITERREN
 }
 
+
+
+
+i2c_status_t i2c1_read_regs_it(uint8_t addr7,
+                              uint8_t reg,
+                              uint8_t *buf,
+                              uint16_t len)
+{
+    // Driver busy?
+    if (g.st != I2C_IDLE) {
+        return I2C_ERR_BUSY;
+    }
+
+    // For now we explicitly forbid 2-byte reads, might need additional configuration
+    if (len == 2U) {
+        return I2C_ERR_UNSUPPORTED;
+    }
+
+    // Clear completion flag (used by main loop)
+    g_done_flag = 0;
+
+    // Fill transfer context
+    g.saddr = saddr;
+    g.reg   = reg;
+
+    g.rx     = buf;
+    g.rx_len = len;
+    g.rx_i   = 0;
+
+    g.tx     = NULL;
+    g.tx_len = 0;
+    g.tx_i   = 0;
+
+    g.op     = I2C_OP_READ_REGS;
+    g.status = I2C_OK;
+
+    // First address phase is WRITE (SLA+W)
+
+    g.st = I2C_START;
+
+    // Resetting flags
+    g.addr_is_read = 0;
+    g.sent_reg = 0;
+
+    // Re-enable I2C interrupt sources
+    // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
+    I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
+
+    // Generate START condition
+    // This will cause SB=1 → EV IRQ → SLA+W sent
+    I2C1->CR1 |= CR1_START;
+
+    return I2C_OK;
+}
+
+
+// Abort plus peripheral reset
+static i2c_status_t i2c_abort_and_reset(i2c_status_t reason)
+{
+    // Generate STOP
+    I2C1->CR1 |= CR1_STOP;
+
+    // Clear NACK flag if set
+    if (I2C1->SR1 & I2C_SR1_AF)
+        I2C1->SR1 &= ~I2C_SR1_AF;
+
+    // Disable I2C
+    I2C1->CR1 &= ~CR1_PE;
+
+    // Small delay to let bus settle
+    uint32_t start = millis();
+    while (elapsed_ms(start) < 1U) {}
+
+    // Re-enable peripheral
+    I2C1->CR1 |= CR1_PE;
+
+    // Check BUSY cleared
+    if (wait_flag_clear(&I2C1->SR2, I2C_SR2_BUSY, I2C_BUSY_TIMEOUT_MS) != I2C_OK)
+    {
+        return I2C_ERR_RECOVERY;
+    }
+
+    return reason;
+}
 
 static void i2c1_finish(i2c_status_t st, uint8_t send_stop)
 {
@@ -715,57 +774,8 @@ static void i2c1_finish(i2c_status_t st, uint8_t send_stop)
     i2c1_disable_irq_sources();
 
     // Mark transfer as finished / driver idle
-    g.op = I2C_OP_NONE;
     g.st = I2C_ST_IDLE;
 
     // Optional: completion flag for main-loop "wait"
     g_done_flag = 1;
-}
-
-i2c_status_t i2c1_read_regs_it(uint8_t addr7,
-                              uint8_t reg,
-                              uint8_t *buf,
-                              uint16_t len)
-{
-    // Driver busy?
-    if (g.st != I2C_ST_IDLE) {
-        return I2C_ERR_BUSY;
-    }
-
-    // For now we explicitly forbid 2-byte reads
-    if (len == 2U) {
-        return I2C_ERR_UNSUPPORTED;
-    }
-
-    // Clear completion flag (used by main loop)
-    g_done_flag = 0;
-
-    // Fill transfer context
-    g.addr7 = addr7;
-    g.reg   = reg;
-
-    g.rx     = buf;
-    g.rx_len = len;
-    g.rx_i   = 0;
-
-    g.tx     = NULL;
-    g.tx_len = 0;
-    g.tx_i   = 0;
-
-    g.op     = I2C_OP_READ_REGS;
-    g.status = I2C_OK;
-
-    // First address phase is WRITE (SLA+W)
-    g.addr_is_read = 0;
-    g.st = I2C_ST_START;
-
-    // Re-enable I2C interrupt sources
-    // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
-    I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
-
-    // Generate START condition
-    // This will cause SB=1 → EV IRQ → SLA+W sent
-    I2C1->CR1 |= CR1_START;
-
-    return I2C_OK;
 }

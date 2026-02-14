@@ -25,9 +25,11 @@ typedef enum {
 	I2C_DATA_SENT, // Data written
 
     // Finish / error
+	I2C_ERR_RECOVERY,
     I2C_ST_STOP,           // generate stop / finalize
     I2C_ST_DONE,
-    I2C_ST_ERROR
+    I2C_ST_ERROR,
+	I2C_ERR_NACK
 } i2c_state_t;
 
 void I2C1_init(void);
