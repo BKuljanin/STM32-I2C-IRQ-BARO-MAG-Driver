@@ -8,6 +8,9 @@
 #ifndef I2C_H_
 #define I2C_H_
 
+#define I2C_OP_WRITE 0
+#define I2C_OP_READ  1
+
 typedef enum {
     I2C_ST_IDLE = 0,
 

@@ -498,8 +498,9 @@ void I2C1_EV_IRQHandler(void)
     	            I2C1->DR = g.saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
     	            g.st = I2C_SADDR;
     	        }
-    	        return;
+    	 return;
     }
+
 
     /* 2. Address sent and ACKed - ADDR */
 
@@ -530,8 +531,9 @@ void I2C1_EV_IRQHandler(void)
         tmp = I2C1->SR2; // --> In that case the peripheral is free to proceed and might clock in byte while ACK was still enabled
         (void)tmp; // Just to avoid compiler complaining about not using tmp
 
+        	return;
         }
-        return;
+
 
 
     /* 3. TXE: DR empty, ready to write */
@@ -565,7 +567,7 @@ void I2C1_EV_IRQHandler(void)
 
             	}
     	}
-
+    	return;
         }
 
 
@@ -596,6 +598,7 @@ void I2C1_EV_IRQHandler(void)
             	}
 
             }
+            return;
         }
 
 
@@ -606,6 +609,7 @@ void I2C1_EV_IRQHandler(void)
             	I2C1->CR1 |= CR1_STOP;
             	g.st = I2C_IDLE;
             }
+            return;
         }
 }
 
