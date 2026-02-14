@@ -492,11 +492,11 @@ void I2C1_EV_IRQHandler(void)
     	            g.addr_is_read = 0;
     	            I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
     	            //I2C1->DR = (uint8_t)(g.addr7 << 1);       // SLA+W
-    	            g.st = I2C_ST_ADDR;
+    	            g.st = I2C_SADDR;
     	        } else if (g.st == I2C_ST_RESTART) { // Repeated start bit expected
     	            g.addr_is_read = 1;
     	            I2C1->DR = saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
-    	            g.st = I2C_ST_ADDR;
+    	            g.st = I2C_SADDR;
     	        }
     	        return;
     }
@@ -509,46 +509,58 @@ void I2C1_EV_IRQHandler(void)
         tmp = I2C1->SR2;
         (void)tmp; // Just to avoid compiler complaining about not using tmp
 
-        if (g.addr_is_read == 0) {
-            // We are in SLA+W phase: next send register address
-            g.st = I2C_ST_SEND_REG;
-        } else {
-            // We are in SLA+R phase: configure ACK/NACK sequence based on rx_len
-            if (g.rx_len == 1) {
-                I2C1->CR1 &= ~CR1_ACK;  // NACK after 1 byte if there is only 1 byte remaining in transfer
-                I2C1->CR1 |= CR1_STOP;  // STOP immediately after clearing ADDR
+        if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 1) {
+            // We are in SADDR+W phase of write: next send register address to set internal pointer to where we want to read from
+            g.st = I2C_SEND_REG;
+        }
+        else if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 0) {
+            // We are in SADDR+W phase of read: next send register address where reading starts from
+        	g.st = I2C_SEND_DATA;
+        }
+        else if (g.st ==  I2C_SADDR && g.addr_is_read == 1 && g.operation == 1) {
+        	// We are in SADDR+R phase of read: read from slave register addressed in SADDR+W phase. This is again after repeated start (after phase 1)
+        	g.st = I2C_READ_DATA;
+                if (g.n == 1){
+                	I2C1->CR1 &= ~CR1_ACK; // Preparing NACK if we read just one byte. It's too late if byte comes to DR and then NACK
+                }
+                else if (g.n > 1){
+                	I2C1->CR1 |= CR1_ACK;	// Preparing ACK for reading bytes when we have several bytes
+                }
             }
-            /*else if (g.rx_len == 2) {
-                I2C1->CR1 |= CR1_POS;
-                I2C1->CR1 &= ~CR1_ACK;  // NACK on the last two sequence
-                // STOP will be set when BTF happens
-            }*/
-            else {
-                I2C1->CR1 |= CR1_ACK;
-                //I2C1->CR1 &= ~CR1_POS;
-            }
-            g.st = I2C_ST_RX;
+
         }
         return;
-    }
 
 
-    /* 3. TXR: DR empty, ready to write */
+    /* 3. TXE: DR empty, ready to write */
 
     if (sr1 & SR1_TXE) { // Previous byte moved from DR to shift register, ready to write
         if (g.st == I2C_ST_SEND_REG) { // Expected to send slave register address
-            I2C1->DR = g.maddr;
 
-            if (g.op == I2C_OP_READ_REGS) { // This operation is a register read
-            // sequence is: START - SLAVE ADDR+W - SLAVE REG ADDR+R - REPEATED START - SLAVE ADDR+R - read bytes
+        	if (g.sent_reg == 0) { // First time we enter TXE, both in read and write, we need to write slave register address. Either we read or write starting from that register
+        		I2C1->DR = g.maddr;
+        		g.sent_reg == 1; // Once we write maddr we set this flag so we don't write slave register address every time TXE triggers, just first time
+        	}
 
-                g.st = I2C_ST_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
+            if (g.st == I2C_SEND_REG) { // This operation is a register read. We give repeated start since in previous TXE we wrote maddr. Now repeated start is given
+            // Sequence is: START - SLAVE ADDR+W - SLAVE REG ADDR+R - REPEATED START - SLAVE ADDR+R - read bytes
+            	I2C1->CR1 |= CR1_START; // During read arms the hardware to generate a repeated START only after the current byte transfer is finished safely.
+            	g.st = I2C_ST_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
+            }
 
-                I2C1->CR1 |= CR1_START; // During read arms the hardware to generate a repeated START only after the current byte transfer is finished safely.
+            if (g.st == I2C_SEND_DATA) {
+            // Now we send data. We wrote maddr where we want to start writing
+            	if (g.n > 0 ){
+
+            		}
+
+            	if (g.n == 0){
+
             	}
-            } else { // This operation is a register write
 
-                g.st = I2C_ST_TX; // We are still in the write phase so we issue START
+
+            	}
+
             }
             return;
         }
@@ -696,3 +708,76 @@ static void i2c1_disable_irqs(void)
 }
 
 
+static void i2c1_finish(i2c_status_t st, uint8_t send_stop)
+{
+    // Save status for user/main-loop
+    g_last_status = st;
+
+    // If requested, try to generate STOP (safe even if already stopping)
+    if (send_stop) {
+        I2C1->CR1 |= CR1_STOP;
+    }
+
+    // Restore default receive behavior for next transaction
+    // (Good hygiene: your RX code may have cleared ACK or set POS.)
+    I2C1->CR1 |= CR1_ACK;
+    I2C1->CR1 &= ~CR1_POS;
+
+    // Stop further I2C IRQs for this transaction
+    i2c1_disable_irq_sources();
+
+    // Mark transfer as finished / driver idle
+    g.op = I2C_OP_NONE;
+    g.st = I2C_ST_IDLE;
+
+    // Optional: completion flag for main-loop "wait"
+    g_done_flag = 1;
+}
+
+i2c_status_t i2c1_read_regs_it(uint8_t addr7,
+                              uint8_t reg,
+                              uint8_t *buf,
+                              uint16_t len)
+{
+    // Driver busy?
+    if (g.st != I2C_ST_IDLE) {
+        return I2C_ERR_BUSY;
+    }
+
+    // For now we explicitly forbid 2-byte reads
+    if (len == 2U) {
+        return I2C_ERR_UNSUPPORTED;
+    }
+
+    // Clear completion flag (used by main loop)
+    g_done_flag = 0;
+
+    // Fill transfer context
+    g.addr7 = addr7;
+    g.reg   = reg;
+
+    g.rx     = buf;
+    g.rx_len = len;
+    g.rx_i   = 0;
+
+    g.tx     = NULL;
+    g.tx_len = 0;
+    g.tx_i   = 0;
+
+    g.op     = I2C_OP_READ_REGS;
+    g.status = I2C_OK;
+
+    // First address phase is WRITE (SLA+W)
+    g.addr_is_read = 0;
+    g.st = I2C_ST_START;
+
+    // Re-enable I2C interrupt sources
+    // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
+    I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
+
+    // Generate START condition
+    // This will cause SB=1 → EV IRQ → SLA+W sent
+    I2C1->CR1 |= CR1_START;
+
+    return I2C_OK;
+}

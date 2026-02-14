@@ -13,9 +13,12 @@ typedef enum {
 
     // Start / addressing phases
     I2C_ST_START,          // SB is expected next
-    I2C_ST_ADDR,         // ADDR is expected next after SLA+W/R
-    I2C_ST_SEND_REG,       // send register address
+    I2C_SADDR,         // ADDR is expected next after SLA+W/R, slave address
+    I2C_SEND_REG,       // send register address
     I2C_ST_RESTART,        // generate repeated START, SB expected
+	I2C_SEND_DATA,	// Sending data
+	I2C_READ_DATA, 	// Reading data
+	I2C_IDLE, // R/W done
 
     // Data phases
     I2C_ST_TX,             // sending payload bytes (write)
