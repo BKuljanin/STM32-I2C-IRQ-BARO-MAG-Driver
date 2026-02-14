@@ -540,6 +540,7 @@ void I2C1_EV_IRQHandler(void)
         	if (g.sent_reg == 0) { // First time we enter TXE, both in read and write, we need to write slave register address. Either we read or write starting from that register
         		I2C1->DR = g.maddr;
         		g.sent_reg == 1; // Once we write maddr we set this flag so we don't write slave register address every time TXE triggers, just first time
+        		return; // Once we write maddr we stop and next action happens in next TXE interrupt
         	}
 
             if (g.st == I2C_SEND_REG) { // This operation is a register read. We give repeated start since in previous TXE we wrote maddr. Now repeated start is given
@@ -551,76 +552,56 @@ void I2C1_EV_IRQHandler(void)
             if (g.st == I2C_SEND_DATA) {
             // Now we send data. We wrote maddr where we want to start writing
             	if (g.n > 0 ){
-
+            		I2C1->DR = *data++;
+            		n--;
             		}
 
             	if (g.n == 0){
-
-            	}
-
+            		g.st = I2C_DATA_SENT;
+            		}
 
             	}
 
             }
-            return;
+
         }
 
 
-    /* 4. RXNE: data received */
+    /* 4. RXNE: data received, ready to be read */
 
     if (sr1 & SR1_RXNE) {
-            if (g.st == I2C_ST_RX) {
-                // For rx_len==1, RXNE is the final byte
-                g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
+            if (g.st == I2C_READ_DATA) {
 
-                if (g.rx_i >= g.rx_len) { // Reached last byte
-                    i2c1_finish(I2C_OK, false); // STOP already sent in len==1 case; harmless if not
-                }
-                return;
+            	if(g.n == 1){
+            		// In case of receiving only 1 byte, NACK is handled in step 2.
+
+            		// Generate stop condition
+            		I2C1->CR1 |= CR1_STOP; // Generate stop after data received to terminate the I2C transaction after the last byte
+
+            		// Store received I2C byte in buffer and increment pointer
+            		*data++ = I2C1->DR; // data is the pointer to the vector buffer
+
+            		g.st = I2C_IDLE;
+            	}
+
+            	else if (g.n > 1){
+            		n--;
+            		if (g.n == 1){
+            		I2C1->CR1 &= ~CR1_ACK; // If one more byte remains, set NACK now. It's too late if it gets to DR, so set now while its in shift register
+            		*data++ = I2C1->DR; // Reading byte from DR
+            		}
+            	}
+
             }
         }
 
 
-    // 5) BTF: byte transfer finished (important for N=2 and last-3 handling)
+    // 5) BTF: byte transfer finished (important for writing)
         if (sr1 & SR1_BTF) {
-            if (g.st == I2C_ST_RX) {
-                uint16_t remaining = (uint16_t)(g.rx_len - g.rx_i);
-
-               /* if (remaining == 2) {
-                    // This is the special N=2 case (POS=1, ACK=0 already set in ADDR)
-                    I2C1->CR1 |= CR1_STOP;
-                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
-                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR;
-                    i2c1_finish(I2C_OK, false);
-                    return;
-                }*/
-
-                if (remaining == 3) {
-                    // Classic last-3 sequence:
-                    // when BTF set, two bytes are ready (N-2 and N-1), and N is in shift.
-                    I2C1->CR1 &= ~CR1_ACK;         // prepare NACK for last remaining byte
-
-                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N-2
-
-                    I2C1->CR1 |= CR1_STOP;         // STOP before reading last 2
-
-                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N-1
-                    g.rx[g.rx_i++] = (uint8_t)I2C1->DR; // read N. Hardware immediately moves the byte from the shift register into DR (because DR is now empty)
-                    i2c1_finish(I2C_OK, false);
-                    return;
-                }
-
-                // For remaining > 3, you can optionally read one byte here too,
-                // but RXNE path already handles streaming bytes.
-                return;
-            }
-
-            if (g.st == I2C_ST_TX) {
-                // End of write: when both DR and shift register empty
-                if (g.tx_i >= g.tx_len) {
-                    i2c1_finish(I2C_OK, true); // generate STOP
-                }
-                return;
+            if (g.st == I2C_DATA_SENT) {
+            	// Generate stop condition
+            	I2C1->CR1 |= CR1_STOP;
+            	g.st = I2C_IDLE;
             }
         }
 }
