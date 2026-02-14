@@ -508,11 +508,11 @@ void I2C1_EV_IRQHandler(void)
 
 
         if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 1) {
-            // We are in SADDR+W phase of write: next send register address to set internal pointer to where we want to read from
+            // We are in SADDR+W phase of read: next send register address to set internal pointer to where we want to read from
             g.st = I2C_SEND_REG;
         }
         else if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 0) {
-            // We are in SADDR+W phase of read: next send register address where reading starts from
+            // We are in SADDR+W phase of write: next send register address where reading starts from
         	g.st = I2C_SEND_DATA;
         }
         else if (g.st ==  I2C_SADDR && g.addr_is_read == 1 && g.operation == 1) {
