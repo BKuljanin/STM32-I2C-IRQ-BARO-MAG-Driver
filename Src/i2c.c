@@ -488,7 +488,7 @@ void I2C1_EV_IRQHandler(void)
 
     // START sent - send address
     if (sr1 & SR1_SB) {
-    	 if (g.st == I2C_ST_START) { // Start bit expected
+    	 if (g.st == I2C_START) { // Start bit expected
     	            g.addr_is_read = 0;
     	            I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
     	            //I2C1->DR = (uint8_t)(g.addr7 << 1);       // SLA+W
@@ -504,10 +504,7 @@ void I2C1_EV_IRQHandler(void)
     /* 2. Address sent and ACKed - ADDR */
 
     if (sr1 & SR1_ADDR) {
-        volatile uint32_t tmp;
-        tmp = I2C1->SR1;
-        tmp = I2C1->SR2;
-        (void)tmp; // Just to avoid compiler complaining about not using tmp
+
 
         if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 1) {
             // We are in SADDR+W phase of write: next send register address to set internal pointer to where we want to read from
@@ -528,6 +525,11 @@ void I2C1_EV_IRQHandler(void)
                 }
             }
 
+        volatile uint32_t tmp;
+        tmp = I2C1->SR1; // Moving clearing on bottom of the function to be after NACK. If it's before it might happen that we clear ADDR and free the peripheral -->
+        tmp = I2C1->SR2; // --> In that case the peripheral is free to proceed and might clock in byte while ACK was still enabled
+        (void)tmp; // Just to avoid compiler complaining about not using tmp
+
         }
         return;
 
@@ -535,25 +537,25 @@ void I2C1_EV_IRQHandler(void)
     /* 3. TXE: DR empty, ready to write */
 
     if (sr1 & SR1_TXE) { // Previous byte moved from DR to shift register, ready to write
-        if (g.st == I2C_ST_SEND_REG) { // Expected to send slave register address
+        if (g.st == I2C_SEND_REG) { // Expected to send slave register address
 
         	if (g.sent_reg == 0) { // First time we enter TXE, both in read and write, we need to write slave register address. Either we read or write starting from that register
         		I2C1->DR = g.maddr;
-        		g.sent_reg == 1; // Once we write maddr we set this flag so we don't write slave register address every time TXE triggers, just first time
+        		g.sent_reg = 1; // Once we write maddr we set this flag so we don't write slave register address every time TXE triggers, just first time
         		return; // Once we write maddr we stop and next action happens in next TXE interrupt
         	}
 
             if (g.st == I2C_SEND_REG) { // This operation is a register read. We give repeated start since in previous TXE we wrote maddr. Now repeated start is given
             // Sequence is: START - SLAVE ADDR+W - SLAVE REG ADDR+R - REPEATED START - SLAVE ADDR+R - read bytes
             	I2C1->CR1 |= CR1_START; // During read arms the hardware to generate a repeated START only after the current byte transfer is finished safely.
-            	g.st = I2C_ST_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
+            	g.st = I2C_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
             }
 
             if (g.st == I2C_SEND_DATA) {
             // Now we send data. We wrote maddr where we want to start writing
             	if (g.n > 0 ){
-            		I2C1->DR = *data++;
-            		n--;
+            		I2C1->DR = *g.data++;
+            		g.n--;
             		}
 
             	if (g.n == 0){
@@ -579,16 +581,17 @@ void I2C1_EV_IRQHandler(void)
             		I2C1->CR1 |= CR1_STOP; // Generate stop after data received to terminate the I2C transaction after the last byte
 
             		// Store received I2C byte in buffer and increment pointer
-            		*data++ = I2C1->DR; // data is the pointer to the vector buffer
+            		*g.data++ = I2C1->DR; // data is the pointer to the vector buffer
 
             		g.st = I2C_IDLE;
             	}
 
             	else if (g.n > 1){
-            		n--;
+            		g.n--;
+            		*g.data++ = I2C1->DR; // Reading byte from DR
             		if (g.n == 1){
-            		I2C1->CR1 &= ~CR1_ACK; // If one more byte remains, set NACK now. It's too late if it gets to DR, so set now while its in shift register
-            		*data++ = I2C1->DR; // Reading byte from DR
+            			I2C1->CR1 &= ~CR1_ACK; // If one more byte remains, set NACK now. It's too late if it gets to DR, so set now while its in shift register
+            			*g.data++ = I2C1->DR; // Reading byte from DR
             		}
             	}
 
@@ -596,7 +599,7 @@ void I2C1_EV_IRQHandler(void)
         }
 
 
-    // 5) BTF: byte transfer finished (important for writing)
+    /* 5. BTF: byte transfer finished (important for writing) */
         if (sr1 & SR1_BTF) {
             if (g.st == I2C_DATA_SENT) {
             	// Generate stop condition
