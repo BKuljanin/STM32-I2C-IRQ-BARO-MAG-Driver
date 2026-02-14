@@ -493,7 +493,7 @@ void I2C1_EV_IRQHandler(void)
     	            I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
     	            //I2C1->DR = (uint8_t)(g.addr7 << 1);       // SLA+W
     	            g.st = I2C_SADDR;
-    	        } else if (g.st == I2C_ST_RESTART) { // Repeated start bit expected
+    	        } else if (g.st == I2C_RESTART) { // Repeated start bit expected
     	            g.addr_is_read = 1;
     	            I2C1->DR = saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
     	            g.st = I2C_SADDR;
@@ -551,7 +551,7 @@ void I2C1_EV_IRQHandler(void)
             	g.st = I2C_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
             }
 
-            if (g.st == I2C_SEND_DATA) {
+            else if (g.st == I2C_SEND_DATA) {
             // Now we send data. We wrote maddr where we want to start writing
             	if (g.n > 0 ){
             		I2C1->DR = *g.data++;
