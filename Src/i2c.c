@@ -119,8 +119,6 @@ void I2C1_init(void)
 }
 
 
-/* Handling timeouts, re-enabling bus, implementing helper function */
-
 // Elapsed time helper function
 static inline uint32_t elapsed_ms(uint32_t start)
 {
@@ -131,43 +129,56 @@ static inline uint32_t elapsed_ms(uint32_t start)
 // Handling interrupts
 void I2C1_EV_IRQHandler(void)
 {
+
+	/* I2C sequence in WRITE: START-SADDR+W-SLAVE ACK-MADDR-SLAVE ACK-DATA-SLAVE ACK-DATA-SLAVE ACK-...-STOP*/
+	/* I2C sequence in READ: START-SADDR+W-SLAVE ACK-MADDR-SLAVE ACK-REPEATED START-SADDR+R-SLAVE ACK-DATA FROM SLAVE-MASTER ACK-DATA FROM SLAVE-MASTER ACK-...-DATA FROM SLAVE-MASTER NACK-STOP*/
+
     uint32_t sr1 = I2C1->SR1;
 
     /* 1. Start condition set */
 
     // START sent - send address
     if (sr1 & SR1_SB) {
+
+    	// First case after start always write the slave address. Both in read and write
     	 if (g.st == I2C_START) { // Start bit confirmed expected
-    	            g.addr_is_read = 0;
-    	            I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
-    	            g.st = I2C_SADDR;
-    	        } else if (g.st == I2C_RESTART) { // Repeated start bit expected
-    	            g.addr_is_read = 1; // This flag differentiates the next states based on whether we trigger START or REPEATED START
-    	            I2C1->DR = g.saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
-    	            g.st = I2C_SADDR;
+    		 g.addr_is_read = 0;
+    	     I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
+    	     g.st = I2C_SADDR;
+    	 }
+
+    	 // Second case is getting start for the second time: repeated start (in read mode). In that case slave address is given again but this time with R (1)
+    	 else if (g.st == I2C_RESTART) { // Repeated start bit expected
+    	     g.addr_is_read = 1; // This flag differentiates the next states based on whether we trigger START or REPEATED START
+    	     I2C1->DR = g.saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
+    	     g.st = I2C_SADDR;
     	        }
     	 return;
     }
-
 
     /* 2. Address sent and ACKed - ADDR */
 
     if (sr1 & SR1_ADDR) {
 
-
+    	// First case is address accepted (slave ACKed) after giving ADDR+W in read mode. Now w prepare for sending slave address
         if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 1) {
             // We are in SADDR+W phase of read: next send register address to set internal pointer to where we want to read from
-            g.st = I2C_SEND_REG;
+            g.st = I2C_SEND_REG; // Flag from previous state addr_is_read determines if we move to send register address of the slave
+            					 // in write phase of read (when we set internal pointer to the proper register address) or start reading in read phase (3rd case below)
         }
+
+        // Second case is address accepted (slave ACKed) after giving ADDR+W in write mode. Now we prepare for sending slave address to where we want to write
         else if (g.st ==  I2C_SADDR && g.addr_is_read == 0 && g.operation == 0) {
             // We are in SADDR+W phase of write: next send register address where reading starts from
         	g.st = I2C_SEND_DATA;
         }
+
+        // Third case is accepted address (slave ACKed) after giving ADDR+R in read mode (second part of the read mode after repeated start). So now we move to state where we read data
         else if (g.st ==  I2C_SADDR && g.addr_is_read == 1 && g.operation == 1) {
         	// We are in SADDR+R phase of read: read from slave register addressed in SADDR+W phase. This is again after repeated start (after phase 1)
         	g.st = I2C_READ_DATA;
                 if (g.n == 1){
-                	I2C1->CR1 &= ~CR1_ACK; // Preparing NACK if we read just one byte. It's too late if byte comes to DR and then NACK
+                	I2C1->CR1 &= ~CR1_ACK; // Preparing NACK if we read just one byte. It's too late if byte comes to DR and then NACK so we configure before it gets to DR
                 }
                 else if (g.n > 1){
                 	I2C1->CR1 |= CR1_ACK;	// Preparing ACK for reading bytes when we have several bytes
@@ -175,14 +186,12 @@ void I2C1_EV_IRQHandler(void)
             }
 
         volatile uint32_t tmp;
-        tmp = I2C1->SR1; // Moving clearing on bottom of the function to be after NACK. If it's before it might happen that we clear ADDR and free the peripheral -->
+        tmp = I2C1->SR1; // Moving clearing ADDR on bottom of the function to be after NACK. If it's before it might happen that we clear ADDR and free the peripheral -->
         tmp = I2C1->SR2; // --> In that case the peripheral is free to proceed and might clock in byte while ACK was still enabled
         (void)tmp; // Just to avoid compiler complaining about not using tmp
 
         	return;
         }
-
-
 
     /* 3. TXE: DR empty, ready to write */
 
@@ -190,27 +199,35 @@ void I2C1_EV_IRQHandler(void)
 
     	if (g.st == I2C_SEND_REG || g.st == I2C_SEND_DATA){
 
+    		/*NOTE: In both cases (when we send register address and where we write data) first we need to send register address (maddr) after the slave address+W
+    		 * So on first TXE interrupt we will execute always the part where we write maddr, but only once. That is what sent_reg flag is for.
+    		 * maddr is always sent first after saddr+W so we move internal pointer of the slave the the place where we want to write (SEND_DATA) or to read from  (SEND_REG)
+    		 * This interrupt happens when we clear ADDR in the previous state, so when TXE triggers that means DR is empty and ready to be written in */
+
+    		// Case zero, common for both. Always first TXE is writing maddr as explained above
         	if (g.sent_reg == 0) { // First time we enter TXE, both in read and write, we need to write slave register address. Either we read or write starting from that register
         		I2C1->DR = g.maddr;
         		g.sent_reg = 1; // Once we write maddr we set this flag so we don't write slave register address every time TXE triggers, just first time
         		return; // Once we write maddr we stop and next action happens in next TXE interrupt
         	}
 
+        	// First case is confirmed writing of slave register address (case 0) in read. Now we have set up internal slave pointer and we can send REPEATED START
             if (g.st == I2C_SEND_REG) { // This operation is a register read. We give repeated start since in previous TXE we wrote maddr. Now repeated start is given
             // Sequence is: START - SLAVE ADDR+W - SLAVE REG ADDR+R - REPEATED START - SLAVE ADDR+R - read bytes
             	I2C1->CR1 |= CR1_START; // During read arms the hardware to generate a repeated START only after the current byte transfer is finished safely.
             	g.st = I2C_RESTART;   // Update state to indicate that the next START generated is the repeated start phase
             }
 
+            // Second case is confirming writing of slave register address (case 0) in write. Now we can start writing data starting from that register
             else if (g.st == I2C_SEND_DATA) {
             // Now we send data. We wrote maddr where we want to start writing
             	if (g.n > 0 ){
-            		I2C1->DR = *g.data++;
-            		g.n--;
+            		I2C1->DR = *g.data++; // Every new TXE interrupt means that the DR is empty and ready to be written in. In every interrupt we write 1 byte to it
+            		g.n--; // In previous step we input a value on DR and move the pointer to the next element in the array. We decrement now total number of bytes left
             		}
 
             	if (g.n == 0){
-            		g.st = I2C_DATA_SENT;
+            		g.st = I2C_DATA_SENT;	// If we sent all bytes we move to the state DATA SENT
             		}
 
             	}
@@ -224,16 +241,17 @@ void I2C1_EV_IRQHandler(void)
     if (sr1 & SR1_RXNE) {
             if (g.st == I2C_READ_DATA) {
 
-            	if(g.n == 1){
+            	// The only case is that we are in READ DATA (second phase of read I2C sequence). Every RXNE interrupt means that the DR is full and ready to be read
+            	if(g.n == 1){ // One byte to be read
             		// In case of receiving only 1 byte, NACK is handled in step 2.
 
             		// Generate stop condition
             		I2C1->CR1 |= CR1_STOP; // Generate stop after data received to terminate the I2C transaction after the last byte
 
             		// Store received I2C byte in buffer and increment pointer
-            		*g.data++ = I2C1->DR; // data is the pointer to the vector buffer
+            		*g.data++ = I2C1->DR; // Data is the pointer to the vector buffer. We read the one byte (or last byte)
 
-            		g.st = I2C_IDLE;
+            		g.st = I2C_IDLE; // Reading is over move to IDLE state
 
             		I2C1->CR1 |= CR1_ACK; // Restoring ACK for next transfer
 
@@ -244,8 +262,8 @@ void I2C1_EV_IRQHandler(void)
 
             	else if (g.n > 1){
             		g.n--;
-            		*g.data++ = I2C1->DR; // Reading byte from DR
-            		if (g.n == 1){
+            		*g.data++ = I2C1->DR; // Reading byte from DR to buffer. Incrementing pointer to move to the next element in the buffer for next read operation
+            		if (g.n == 1){ // Preparing NACK if one byte remains
             			I2C1->CR1 &= ~CR1_ACK; // If one more byte remains, set NACK now. It's too late if it gets to DR, so set now while its in shift register
             			// *g.data++ = I2C1->DR; // Reading byte from DR Commented out this is wrong place to read, read hapepns in next interrupt RXNE
             		}
@@ -258,13 +276,15 @@ void I2C1_EV_IRQHandler(void)
 
     /* 5. BTF: byte transfer finished (important for writing) */
         if (sr1 & SR1_BTF) {
+
+        	// The only case is after sending all bytes in write operation.
             if (g.st == I2C_DATA_SENT) {
-            	// Generate stop condition
-            	I2C1->CR1 |= CR1_STOP;
-            	g.st = I2C_IDLE;
+
+            	I2C1->CR1 |= CR1_STOP; // Generate stop condition
+            	g.st = I2C_IDLE; // Moving to idle state
             	I2C1->CR1 |= CR1_ACK; // Restoring ACK for next transfer
             	g.done = 1;
-            	i2c1_disable_irqs();
+            	i2c1_disable_irqs(); // Disabling I2C interrupts
             }
             return;
         }
@@ -285,8 +305,7 @@ void I2C1_ER_IRQHandler(void)
         I2C1->SR1 &= ~SR1_AF;
         st = I2C_ERR_NACK;
 
-        // If we lost arbitration too, ARLO handler below will overwrite st.
-        // We generally still try to STOP.
+        // If we lost arbitration too, ARLO handler below will overwrite st
     }
 
     // 2) Bus error (illegal START/STOP, line glitch, etc.)
@@ -297,14 +316,14 @@ void I2C1_ER_IRQHandler(void)
     }
 
     // 3) Arbitration lost (multi master or noise)
-    // If ARLO happens, we are no longer master; STOP may be meaningless.
+    // If ARLO happens, we are no longer master so STOP may be meaningless
     if (sr1 & SR1_ARLO)
     {
         I2C1->SR1 &= ~SR1_ARLO;
         st = I2C_ERR_RECOVERY;
 
-        // After ARLO, hardware switches off master mode. Generating STOP may not do anything.
-        // We can avoid forcing STOP to reduce weirdness.
+        // After ARLO, hardware switches off master mode. Generating STOP may not do anything
+        // We can avoid forcing STOP to reduce weirdness
         need_stop = 0;
     }
 
@@ -377,11 +396,6 @@ i2c_status_t I2C1_Read(char saddr,
         return I2C_BUSY;
     }
 
-    // We explicitly forbid 2 byte reads, might need additional configuration
-    /*if (len == 2U) {
-        return I2C_ERR_UNSUPPORTED;
-    }*/
-
     // Clear completion flag (used by main loop)
     g.done = 0;
     g.err = I2C_OK;
@@ -392,8 +406,6 @@ i2c_status_t I2C1_Read(char saddr,
     g.data = data;
     g.n = n;
     g.operation = I2C_OP_READ;
-
-    // g.status = I2C_OK;
 
     g.st = I2C_START;
 
@@ -433,8 +445,6 @@ i2c_status_t I2C1_Write(char saddr,
     g.data = data;
     g.n = n;
     g.operation = I2C_OP_WRITE;
-
-    // g.status = I2C_OK;
 
     g.st = I2C_START;
 

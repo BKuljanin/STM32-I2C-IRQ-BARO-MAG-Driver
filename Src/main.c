@@ -30,7 +30,7 @@ int main(void)
 {
 	SysTick_Init();
 	mpu6500_init();
-	uint32_t next_read_ms = millis();   // schedule first read immediately
+	uint32_t next_read_ms = millis();   // Schedule first read immediately
 
 	// Gyroscope calibration
 	mpu6500_calibrate_gyro(gyro_calibration_samples);
@@ -44,7 +44,7 @@ int main(void)
 			        {
 				 	 	 	next_read_ms += 10U;
 
-				 	 	 	if (!mpu_read_in_flight)
+				 	 	 	if (!mpu_read_in_flight) // Prevents another reading command if there is ongoing reading
 				 	 	 	{
 
 							// Read from data register (accelerometer - temperature - gyroscope)
@@ -52,13 +52,13 @@ int main(void)
 							// Slave auto increments internal register address during sequential read (next data byte)
 							if (I2C1_Read(DEVICE_ADDR, DATA_ACC_START_ADDR, 14, (char*)data_rec) == I2C_OK)
 									{
-							            mpu_read_in_flight = 1;
+							            mpu_read_in_flight = 1; // Sets the flag that there is ongoing reading
 							        }
 				 	 	 	}
 
 			        }
 
-						 if (mpu_read_in_flight && I2C1_Done())           // or driver function i2c_done()
+						 if (mpu_read_in_flight && I2C1_Done()) // This prevents processing data if the reading is in progress
 							 {
 							 mpu_read_in_flight = 0;
 
