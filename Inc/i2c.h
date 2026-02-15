@@ -17,6 +17,7 @@ typedef enum {
     I2C_OP_READ  = 1,   // Operation==1  read
 } i2c_op_t;
 
+// Defining state machine structure
 typedef enum {
 
     I2C_START,          // SB is expected next
@@ -30,7 +31,7 @@ typedef enum {
 
 } i2c_state_t;
 
-
+// Defining status structure
 typedef enum {
     I2C_OK = 0,
     I2C_BUSY,
@@ -42,24 +43,24 @@ typedef enum {
     I2C_ERR_ARLO,
 } i2c_status_t;
 
-
+// Defining struct that contains what is required for I2C communication (address, data, etc.)
 typedef struct {
 
-    volatile i2c_state_t  st; // Current state
-    volatile i2c_status_t err;     // set by ER IRQ or timeout code
-    volatile uint8_t      done;    // 0 = busy, 1 = finished (OK or error)
+    volatile i2c_state_t  st; 			  // Current state
+    volatile i2c_status_t err;     		  // set by ER IRQ or timeout code
+    volatile uint8_t      done;    		  // 0 = busy, 1 = finished (OK or error)
 
-    i2c_op_t              operation;     // 0 write, 1 read (as you use)
-    uint8_t               saddr;         // 7-bit slave address
-    uint8_t               maddr;         // Slave register address
+    i2c_op_t              operation;      // 0 write, 1 read (as you use)
+    uint8_t               saddr;          // 7-bit slave address
+    uint8_t               maddr;          // Slave register address
 
-    char              	  *data;         // Buffer pointer
-    volatile uint16_t     n;             // Remaining bytes
+    char              	  *data;          // Buffer pointer
+    volatile uint16_t     n;              // Remaining bytes
 
-    volatile uint8_t      addr_is_read;  // 0 = last addr sent was W, 1 = last addr sent was R
-    volatile uint8_t      sent_reg;      // 0 = maddr not sent yet, 1 = maddr already sent
+    volatile uint8_t      addr_is_read;   // 0 = last addr sent was W, 1 = last addr sent was R
+    volatile uint8_t      sent_reg;       // 0 = maddr not sent yet, 1 = maddr already sent
 
-    volatile uint32_t     started_ms;    // for timeouts (set at start)
+    volatile uint32_t     started_ms;     // for timeouts (set at start)
 } i2c_struct;
 
 

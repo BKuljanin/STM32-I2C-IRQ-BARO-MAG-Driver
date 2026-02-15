@@ -65,7 +65,7 @@ void mpu6500_calibrate_gyro(uint16_t gyro_samples)
 
     for (int i = 0; i < gyro_samples; i++)
     {
-        mpu6500_read_values(DATA_ACC_START_ADDR);
+    	I2C1_Read(DEVICE_ADDR, DATA_ACC_START_ADDR, 14, (char*)data_rec);
 
         sum_x += (int16_t)((data_rec[8]  << 8) | data_rec[9]);
         sum_y += (int16_t)((data_rec[10] << 8) | data_rec[11]);

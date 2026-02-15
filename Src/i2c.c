@@ -137,13 +137,12 @@ void I2C1_EV_IRQHandler(void)
 
     // START sent - send address
     if (sr1 & SR1_SB) {
-    	 if (g.st == I2C_START) { // Start bit expected
+    	 if (g.st == I2C_START) { // Start bit confirmed expected
     	            g.addr_is_read = 0;
     	            I2C1->DR = g.saddr <<1; // Reference manual p767. This moves it into bits [7:1] and clears bit 0. R/W 0 = WRITE. So we type slave address, shift one left and that way bit 0 is 0 which is write
-    	            //I2C1->DR = (uint8_t)(g.addr7 << 1);       // SLA+W
     	            g.st = I2C_SADDR;
     	        } else if (g.st == I2C_RESTART) { // Repeated start bit expected
-    	            g.addr_is_read = 1;
+    	            g.addr_is_read = 1; // This flag differentiates the next states based on whether we trigger START or REPEATED START
     	            I2C1->DR = g.saddr <<1 | 1;  // Shift slave address and sets bit 0 which is read
     	            g.st = I2C_SADDR;
     	        }
@@ -374,7 +373,7 @@ i2c_status_t I2C1_Read(char saddr,
 
 {
     // Driver busy
-    if (g.st != I2C_IDLE) {
+    if (g.st != I2C_IDLE) { // g.st is initialized as IDLE in initialization function
         return I2C_BUSY;
     }
 
@@ -477,9 +476,10 @@ void i2c_abort_and_reset(void)
     // Re-enable peripheral
     I2C1->CR1 |= CR1_PE;
 
-
 }
 
+
+// These two functions just serve to return g.done and g.err in main.c
 uint8_t I2C1_Done(void)
 {
 	return g.done;
@@ -490,28 +490,3 @@ i2c_status_t I2C1_Err(void)
 	return g.err;
 }
 
-/*static void i2c1_finish(i2c_status_t st, uint8_t send_stop)
-{
-    // Save status for user/main-loop
-    g_last_status = st;
-
-    // If requested, try to generate STOP (safe even if already stopping)
-    if (send_stop) {
-        I2C1->CR1 |= CR1_STOP;
-    }
-
-    // Restore default receive behavior for next transaction
-    // (Good hygiene: your RX code may have cleared ACK or set POS.)
-    I2C1->CR1 |= CR1_ACK;
-    I2C1->CR1 &= ~CR1_POS;
-
-    // Stop further I2C IRQs for this transaction
-    i2c1_disable_irq_sources();
-
-    // Mark transfer as finished / driver idle
-    g.st = I2C_ST_IDLE;
-
-    // Optional: completion flag for main-loop "wait"
-    g_done_flag = 1;
-}
-*/
