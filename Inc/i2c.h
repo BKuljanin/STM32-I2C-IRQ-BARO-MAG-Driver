@@ -53,7 +53,7 @@ typedef struct {
     uint8_t               saddr;         // 7-bit slave address
     uint8_t               maddr;         // Slave register address
 
-    uint8_t              *data;          // Buffer pointer
+    char              	  *data;         // Buffer pointer
     volatile uint16_t     n;             // Remaining bytes
 
     volatile uint8_t      addr_is_read;  // 0 = last addr sent was W, 1 = last addr sent was R
@@ -64,7 +64,7 @@ typedef struct {
 
 
 void I2C1_init(void);
-i2c_status_t  I2C1_Write(char saddr, char maddr, int n, char* data);
-i2c_status_t  I2C1_Read(char saddr, char maddr, int n, char* data);
+i2c_status_t  I2C1_Write(char saddr, char maddr, uint16_t n, char* data);
+i2c_status_t  I2C1_Read(char saddr, char maddr, uint16_t n, char* data);
 
 #endif /* I2C_H_ */

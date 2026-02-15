@@ -42,6 +42,7 @@
 
 // Prototypes of helper functions
 static void i2c1_disable_irqs(void);
+static void i2c1_enable_irqs(void);
 
 // Global instance used by IRQ handlers
 static i2c_struct g;
@@ -231,6 +232,9 @@ void I2C1_EV_IRQHandler(void)
             		*g.data++ = I2C1->DR; // data is the pointer to the vector buffer
 
             		g.st = I2C_IDLE;
+
+            		g.done = 1;
+
             		i2c1_disable_irqs();
             	}
 
@@ -254,6 +258,7 @@ void I2C1_EV_IRQHandler(void)
             	// Generate stop condition
             	I2C1->CR1 |= CR1_STOP;
             	g.st = I2C_IDLE;
+            	g.done = 1;
             	i2c1_disable_irqs();
             }
             return;
@@ -333,6 +338,8 @@ void I2C1_ER_IRQHandler(void)
     // Abort/finish: send STOP when it makes sense, then reset state machine
     //i2c1_finish(st, need_stop);
     g.err = st;
+    g.done = 1;
+    g.st   = I2C_IDLE;
     if (need_stop == 1){
     	i2c_abort_and_reset();
     }
@@ -346,18 +353,25 @@ static void i2c1_disable_irqs(void)
     I2C1->CR2 &= ~((1U<<10) | (1U<<9) | (1U<<8)); // ITBUFEN, ITEVTEN, ITERREN
 }
 
+static void i2c1_enable_irqs(void)
+{
+    // Disable buffer/event/error interrupts (keep peripheral enabled)
+	I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8); // ITBUFEN, ITEVTEN, ITERREN
+}
+
 
 i2c_status_t I2C1_Read(uint8_t saddr,
                        uint8_t maddr,
-                       uint8_t *data,
-                       uint16_t n)
-{
-    // Driver busy?
-    /*if (g.st != I2C_IDLE) {
-        return I2C_BUSY;
-    }*/
+					   uint16_t n,
+                       char *data)
 
-    // We explicitly forbid 2-byte reads, might need additional configuration
+{
+    // Driver busy
+    if (g.st != I2C_IDLE) {
+        return I2C_BUSY;
+    }
+
+    // We explicitly forbid 2 byte reads, might need additional configuration
     /*if (len == 2U) {
         return I2C_ERR_UNSUPPORTED;
     }*/
@@ -382,7 +396,7 @@ i2c_status_t I2C1_Read(uint8_t saddr,
 
     // Re-enable I2C interrupts
     // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
-    I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
+    i2c1_enable_irqs();
 
     // Generate START condition
     // This will cause SB=1 → EV IRQ → SLA+W sent
@@ -393,9 +407,14 @@ i2c_status_t I2C1_Read(uint8_t saddr,
 
 i2c_status_t I2C1_Write(uint8_t saddr,
                         uint8_t maddr,
-                        uint8_t *data,
-                        uint16_t n)
+						uint16_t n,
+                        char *data)
 {
+
+    // Driver busy
+    if (g.st != I2C_IDLE) {
+        return I2C_BUSY;
+    }
 
     // Clear completion flag (used by main loop)
     g.done = 0;
@@ -417,7 +436,7 @@ i2c_status_t I2C1_Write(uint8_t saddr,
 
     // Re-enable I2C interrupts
     // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
-    I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
+    i2c1_enable_irqs();
 
     // Generate START condition
     // This will cause SB=1 - EV IRQ - SLA+W sent
@@ -425,7 +444,6 @@ i2c_status_t I2C1_Write(uint8_t saddr,
 
     return I2C_OK;
 }
-
 
 
 // Abort plus peripheral reset
