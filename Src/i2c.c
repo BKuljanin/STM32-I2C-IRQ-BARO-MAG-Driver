@@ -347,17 +347,17 @@ static void i2c1_disable_irqs(void)
 }
 
 
-i2c_status_t i2c1_read_regs_it(uint8_t saddr,
-                              uint8_t maddr,
-                              uint8_t *data,
-                              uint16_t n)
+i2c_status_t I2C1_Read(uint8_t saddr,
+                       uint8_t maddr,
+                       uint8_t *data,
+                       uint16_t n)
 {
     // Driver busy?
-    if (g.st != I2C_IDLE) {
+    /*if (g.st != I2C_IDLE) {
         return I2C_BUSY;
-    }
+    }*/
 
-    // For now we explicitly forbid 2-byte reads, might need additional configuration
+    // We explicitly forbid 2-byte reads, might need additional configuration
     /*if (len == 2U) {
         return I2C_ERR_UNSUPPORTED;
     }*/
@@ -368,15 +368,11 @@ i2c_status_t i2c1_read_regs_it(uint8_t saddr,
     // Fill transfer context
     g.saddr = saddr;
     g.maddr   = maddr;
-
+    g.data = data;
     g.n = n;
-    g.operation     = I2C_OP_READ;
-
+    g.operation = I2C_OP_READ;
 
     // g.status = I2C_OK;
-
-
-    // First address phase is WRITE (SLA+W)
 
     g.st = I2C_START;
 
@@ -384,7 +380,7 @@ i2c_status_t i2c1_read_regs_it(uint8_t saddr,
     g.addr_is_read = 0;
     g.sent_reg = 0;
 
-    // Re-enable I2C interrupt sources
+    // Re-enable I2C interrupts
     // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
     I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
 
@@ -394,6 +390,42 @@ i2c_status_t i2c1_read_regs_it(uint8_t saddr,
 
     return I2C_OK;
 }
+
+i2c_status_t I2C1_Write(uint8_t saddr,
+                        uint8_t maddr,
+                        uint8_t *data,
+                        uint16_t n)
+{
+
+    // Clear completion flag (used by main loop)
+    g.done = 0;
+
+    // Fill transfer context
+    g.saddr = saddr;
+    g.maddr   = maddr;
+    g.data = data;
+    g.n = n;
+    g.operation = I2C_OP_WRITE;
+
+    // g.status = I2C_OK;
+
+    g.st = I2C_START;
+
+    // Resetting flags
+    g.addr_is_read = 0;
+    g.sent_reg = 0;
+
+    // Re-enable I2C interrupts
+    // ITBUFEN (bit10), ITEVTEN (bit9), ITERREN (bit8)
+    I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
+
+    // Generate START condition
+    // This will cause SB=1 → EV IRQ → SLA+W sent
+    I2C1->CR1 |= CR1_START;
+
+    return I2C_OK;
+}
+
 
 
 // Abort plus peripheral reset
