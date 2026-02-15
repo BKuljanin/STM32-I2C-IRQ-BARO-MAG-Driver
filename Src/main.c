@@ -22,6 +22,8 @@ float temperature_c;
 extern uint8_t data_rec[14]; // Defined in mpu6500.c
 extern int16_t gyro_bias[3]; // Defined in mpu6500.c
 
+
+
 int main(void)
 {
 	SysTick_Init();
