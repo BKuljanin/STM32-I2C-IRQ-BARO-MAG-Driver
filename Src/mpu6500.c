@@ -21,7 +21,7 @@ int16_t gyro_bias[3];
 
 void mpu6500_read_address (uint8_t reg)
 {
-	//(void)I2C1_byteRead(DEVICE_ADDR, reg, &data);
+	(void)I2C1_Read(DEVICE_ADDR, reg, 1, &data);
 }
 
 void mpu6500_write (uint8_t reg, char value)
@@ -29,12 +29,12 @@ void mpu6500_write (uint8_t reg, char value)
 	char data[1];
 	data[0]=value;
 
-	//(void)I2C1_burstWrite(DEVICE_ADDR, reg,1, data);
+	(void)I2C1_Write(DEVICE_ADDR, reg, 1, data);
 }
 
 void mpu6500_read_values(uint8_t reg)
 {
-	//(void)I2C1_burstRead(DEVICE_ADDR, reg, 14, (char *)data_rec); // 14 values to read
+	(void)I2C1_Read(DEVICE_ADDR, reg, 14, (char *)data_rec); // 14 values to read
 
 }
 
