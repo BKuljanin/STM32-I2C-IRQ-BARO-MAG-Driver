@@ -420,7 +420,7 @@ i2c_status_t I2C1_Write(uint8_t saddr,
     I2C1->CR2 |= (1U<<10) | (1U<<9) | (1U<<8);
 
     // Generate START condition
-    // This will cause SB=1 → EV IRQ → SLA+W sent
+    // This will cause SB=1 - EV IRQ - SLA+W sent
     I2C1->CR1 |= CR1_START;
 
     return I2C_OK;
