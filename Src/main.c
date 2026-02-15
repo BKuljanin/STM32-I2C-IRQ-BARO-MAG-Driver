@@ -25,6 +25,7 @@ extern int16_t gyro_bias[3]; // Defined in mpu6500.c
 // Reading data flags
 static uint8_t mpu_read_in_flight = 0;
 //static uint8_t data_ready = 0;
+uint8_t debug = 0;
 
 int main(void)
 {
@@ -53,6 +54,7 @@ int main(void)
 							if (I2C1_Read(DEVICE_ADDR, DATA_ACC_START_ADDR, 14, (char*)data_rec) == I2C_OK)
 									{
 							            mpu_read_in_flight = 1;
+							            debug = 1;
 							        }
 				 	 	 	}
 

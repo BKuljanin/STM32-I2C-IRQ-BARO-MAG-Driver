@@ -109,6 +109,11 @@ void I2C1_init(void)
 	NVIC_SetPriority(I2C1_ER_IRQn, 0); // Higher priority than EV
 	NVIC_EnableIRQ(I2C1_ER_IRQn); // Error interrupt: AF (acknowledge failure), BERR (bus error), ARLO (arbitration lost), OVR (overrun, underrun), TIMEOUT
 
+	// Initializing flags
+	g.st = I2C_IDLE;
+	g.done = 1;
+	g.err = I2C_OK;
+
 	//Enable I2C
 	I2C1->CR1 |= CR1_PE;
 }
@@ -231,6 +236,8 @@ void I2C1_EV_IRQHandler(void)
 
             		g.st = I2C_IDLE;
 
+            		I2C1->CR1 |= CR1_ACK; // Restoring ACK for next transfer
+
             		g.done = 1;
 
             		i2c1_disable_irqs();
@@ -256,6 +263,7 @@ void I2C1_EV_IRQHandler(void)
             	// Generate stop condition
             	I2C1->CR1 |= CR1_STOP;
             	g.st = I2C_IDLE;
+            	I2C1->CR1 |= CR1_ACK; // Restoring ACK for next transfer
             	g.done = 1;
             	i2c1_disable_irqs();
             }
@@ -338,6 +346,7 @@ void I2C1_ER_IRQHandler(void)
     g.err = st;
     g.done = 1;
     g.st   = I2C_IDLE;
+    I2C1->CR1 |= CR1_ACK; // Restoring ACK for next transfer
     if (need_stop == 1){
     	i2c_abort_and_reset();
     }
@@ -463,8 +472,11 @@ void i2c_abort_and_reset(void)
     uint32_t start = millis();
     while (elapsed_ms(start) < 1U) {}
 
+    I2C1->CR1 |= CR1_ACK; // Restoring ACK for next transfer
+
     // Re-enable peripheral
     I2C1->CR1 |= CR1_PE;
+
 
 }
 
