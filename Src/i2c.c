@@ -36,13 +36,11 @@
 #define I2C_FLAG_TIMEOUT_MS   5U
 #define I2C_BUSY_TIMEOUT_MS   5U
 
-// Helper functions
-#define I2C_SR1_AF (1U<<10)
-#define I2C_SR2_BUSY (1U<<1)
 
 // Prototypes of helper functions
 static void i2c1_disable_irqs(void);
 static void i2c1_enable_irqs(void);
+void i2c_abort_and_reset(void);
 
 // Global instance used by IRQ handlers
 static i2c_struct g;
@@ -360,8 +358,8 @@ static void i2c1_enable_irqs(void)
 }
 
 
-i2c_status_t I2C1_Read(uint8_t saddr,
-                       uint8_t maddr,
+i2c_status_t I2C1_Read(char saddr,
+                       char maddr,
 					   uint16_t n,
                        char *data)
 
@@ -378,6 +376,7 @@ i2c_status_t I2C1_Read(uint8_t saddr,
 
     // Clear completion flag (used by main loop)
     g.done = 0;
+    g.err = I2C_OK;
 
     // Fill transfer context
     g.saddr = saddr;
@@ -405,8 +404,8 @@ i2c_status_t I2C1_Read(uint8_t saddr,
     return I2C_OK;
 }
 
-i2c_status_t I2C1_Write(uint8_t saddr,
-                        uint8_t maddr,
+i2c_status_t I2C1_Write(char saddr,
+                        char maddr,
 						uint16_t n,
                         char *data)
 {
@@ -418,6 +417,7 @@ i2c_status_t I2C1_Write(uint8_t saddr,
 
     // Clear completion flag (used by main loop)
     g.done = 0;
+    g.err = I2C_OK;
 
     // Fill transfer context
     g.saddr = saddr;
@@ -453,8 +453,8 @@ void i2c_abort_and_reset(void)
     I2C1->CR1 |= CR1_STOP;
 
     // Clear NACK flag if set
-    if (I2C1->SR1 & I2C_SR1_AF)
-        I2C1->SR1 &= ~I2C_SR1_AF;
+    if (I2C1->SR1 & SR1_AF)
+        I2C1->SR1 &= ~SR1_AF;
 
     // Disable I2C
     I2C1->CR1 &= ~CR1_PE;
@@ -466,6 +466,16 @@ void i2c_abort_and_reset(void)
     // Re-enable peripheral
     I2C1->CR1 |= CR1_PE;
 
+}
+
+uint8_t I2C1_Done(void)
+{
+	return g.done;
+}
+
+i2c_status_t I2C1_Err(void)
+{
+	return g.err;
 }
 
 /*static void i2c1_finish(i2c_status_t st, uint8_t send_stop)

@@ -22,7 +22,9 @@ float temperature_c;
 extern uint8_t data_rec[14]; // Defined in mpu6500.c
 extern int16_t gyro_bias[3]; // Defined in mpu6500.c
 
-
+// Reading data flags
+static uint8_t mpu_read_in_flight = 0;
+//static uint8_t data_ready = 0;
 
 int main(void)
 {
@@ -31,9 +33,9 @@ int main(void)
 	uint32_t next_read_ms = millis();   // schedule first read immediately
 
 	// Gyroscope calibration
-	mpu6500_calibrate_gyro(gyro_calibration_samples);
+	// mpu6500_calibrate_gyro(gyro_calibration_samples);
 
-		while(1)
+	while(1)
 	{
 			uint32_t now = millis(); // Reading current time
 
@@ -42,9 +44,26 @@ int main(void)
 			        {
 				 	 	 	next_read_ms += 10U;
 
+				 	 	 	if (!mpu_read_in_flight)
+				 	 	 	{
+
 							// Read from data register (accelerometer - temperature - gyroscope)
-							mpu6500_read_values(DATA_ACC_START_ADDR); // Reading from register where accelerometer data starts
+							// Reading from register where accelerometer data starts
 							// Slave auto increments internal register address during sequential read (next data byte)
+							if (I2C1_Read(DEVICE_ADDR, DATA_ACC_START_ADDR, 14, (char*)data_rec) == I2C_OK)
+									{
+							            mpu_read_in_flight = 1;
+							        }
+				 	 	 	}
+
+			        }
+
+						 if (mpu_read_in_flight && I2C1_Done())           // or driver function i2c_done()
+							 {
+							 mpu_read_in_flight = 0;
+
+							 if (I2C1_Err() == I2C_OK)
+							 {
 
 							acc_x = ((data_rec[0]<<8) | data_rec[1]); // Shifting to obtain x, data is stored in 2 bytes
 							acc_y = ((data_rec[2]<<8) | data_rec[3]); // Multiplied to get unit in g
@@ -68,7 +87,10 @@ int main(void)
 							omega_yg = (omega_y - gyro_bias[1]) / 65.6;
 							omega_zg = (omega_z - gyro_bias[2]) / 65.6;
 
-			        }
+							 }
+							 }
+
+
 
 
 	}

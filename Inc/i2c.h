@@ -66,5 +66,7 @@ typedef struct {
 void I2C1_init(void);
 i2c_status_t  I2C1_Write(char saddr, char maddr, uint16_t n, char* data);
 i2c_status_t  I2C1_Read(char saddr, char maddr, uint16_t n, char* data);
+uint8_t I2C1_Done(void);
+i2c_status_t I2C1_Err(void);
 
 #endif /* I2C_H_ */
